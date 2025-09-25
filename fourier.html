@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fourier Series – Single‑File HTML Simulator</title>
+<style>
+  :root {
+    --bg: #0b0f17;     /* page */
+    --panel: #121826;  /* cards */
+    --ink: #e9eef7;    /* text */
+    --muted: #93a0b5;  /* secondary text */
+    --accent: #6ea8fe; /* buttons/slider */
+    --grid: #273046;   /* grid lines */
+    --good: #34d399;   /* target f(t) */
+    --recon: #fca5a5;  /* reconstruction */
+    --stem: #a78bfa;   /* spectrum stems */
+    --axis: #7b879a;   /* axis */
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, 'Helvetica Neue', Arial}
+  #app{display:grid; grid-template-columns: 360px 1fr; gap:14px; padding:14px;}
+  .card{background:var(--panel); border:1px solid #1c2336; border-radius:16px; box-shadow:0 1px 0 #0007, 0 10px 30px #0003;}
+  .pad{padding:14px}
+  h1{font-size:18px; margin:0 0 6px}
+  h2{font-size:14px; font-weight:600; color:var(--muted); margin:12px 0 6px}
+  label{display:block; margin:10px 0 4px; color:var(--muted)}
+  input[type="text"], select, input[type="number"] {width:100%; padding:8px 10px; border-radius:10px; border:1px solid #2a3550; background:#0e1422; color:var(--ink)}
+  input[type="range"]{width:100%}
+  .row{display:flex; gap:10px; align-items:center}
+  .row > *{flex:1}
+  .btn{display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:12px; background:linear-gradient(180deg, #2a3a64, #1b2645); color:#e9eef7; border:1px solid #2a3550; cursor:pointer; user-select:none}
+  .btn:active{transform:translateY(1px)}
+  .btn.secondary{background:#0e1422}
+  .inline{display:inline-block}
+  .tiny{font-size:12px; color:var(--muted)}
+  canvas{width:100%; height:220px; display:block; border-bottom-left-radius:16px; border-bottom-right-radius:16px}
+  .plot-header{display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #1c2336}
+  .legend{display:flex; gap:12px; align-items:center; color:var(--muted)}
+  .swatch{width:12px; height:12px; border-radius:3px; display:inline-block; vertical-align:middle; margin-right:6px}
+  .grid-row{display:grid; grid-template-columns:1fr; gap:14px}
+  .coeffs{max-height:180px; overflow:auto; border-top:1px solid #1c2336;}
+  table{width:100%; border-collapse:collapse; font-feature-settings:"tnum" 1, "lnum" 1}
+  th, td{padding:6px 10px; border-bottom:1px dashed #273046; text-align:right}
+  th:first-child, td:first-child{text-align:center}
+  code{background:#0e1422; padding:2px 6px; border-radius:6px; border:1px solid #2a3550}
+  .hint{color:var(--muted); font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Controls -->
+  <div class="card pad">
+    <h1>Fourier Series – Interactive</h1>
+    <div class="hint">Period <code>T</code>, choose a signal or enter a formula <code>f(t)</code>. Then pick the number of harmonics <code>N</code> and see the reconstruction and spectrum.</div>
+
+    <h2>Signal</h2>
+    <label>Preset</label>
+    <select id="preset">
+      <option value="square">Square wave</option>
+      <option value="saw">Sawtooth</option>
+      <option value="triangle">Triangle</option>
+      <option value="halfrect">Half‑wave rectified sine</option>
+      <option value="pulse50">50% duty pulse (0/1)</option>
+      <option value="custom">Custom formula…</option>
+    </select>
+
+    <div id="formulaBox" style="display:none">
+      <label>Custom formula <span class="tiny">(use <code>t</code> in seconds; helpers: <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>abs</code>, <code>sign</code>, <code>pi</code>)</span></label>
+      <input id="formula" type="text" value="sin(2*pi*t/T)" />
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Period T (seconds)</label>
+        <input id="period" type="number" step="0.001" value="6.283" />
+      </div>
+      <div>
+        <label>Harmonics N</label>
+        <input id="harmonics" type="range" min="1" max="200" value="10" />
+        <div class="tiny"><span id="harmonicsVal">10</span></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="recalc">Recalculate</button>
+      <button class="btn secondary" id="animate">▶ Animate</button>
+      <button class="btn secondary" id="resetView">Reset all</button>
+    </div>
+
+    <h2>Integration accuracy</h2>
+    <div class="row">
+      <div>
+        <label>Samples per period (M)</label>
+        <input id="samples" type="range" min="256" max="8192" step="256" value="2048" />
+        <div class="tiny"><span id="samplesVal">2048</span></div>
+      </div>
+      <div>
+        <label>Show terms</label>
+        <select id="termMode">
+          <option value="both">Sine & Cosine</option>
+          <option value="odd">Odd only (for odd symmetry)</option>
+          <option value="even">Even only (for even symmetry)</option>
+        </select>
+      </div>
+    </div>
+
+    <h2>Coefficients</h2>
+    <div class="coeffs">
+      <table id="coefTable">
+        <thead><tr><th>n</th><th>aₙ</th><th>bₙ</th><th>|cₙ|</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Plots -->
+  <div class="grid-row">
+    <div class="card">
+      <div class="plot-header">
+        <div>Signal vs Reconstruction</div>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--good)"></i> f(t)</span>
+          <span><i class="swatch" style="background:var(--recon)"></i> S<sub>N</sub>(t)</span>
+        </div>
+      </div>
+      <canvas id="plot"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="plot-header">
+        <div>Magnitude Spectrum |cₙ| = √(aₙ² + bₙ²)</div>
+        <div class="legend"><span><i class="swatch" style="background:var(--stem)"></i> up to N</span></div>
+      </div>
+      <canvas id="spectrum"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="plot-header"><div>Reconstruction Error E<sub>RMS</sub> over one period</div></div>
+      <canvas id="error"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = sel => document.querySelector(sel);
+const plot = $('#plot'), spec = $('#spectrum'), errC = $('#error');
+const ctxP = plot.getContext('2d');
+const ctxS = spec.getContext('2d');
+const ctxE = errC.getContext('2d');
+
+let anim = { running:false, n:1, dir:1 };
+
+const ui = {
+  preset: $('#preset'),
+  formulaBox: $('#formulaBox'),
+  formula: $('#formula'),
+  T: $('#period'),
+  N: $('#harmonics'), Nval: $('#harmonicsVal'),
+  M: $('#samples'), Mval: $('#samplesVal'),
+  recalc: $('#recalc'), animate: $('#animate'), resetView: $('#resetView'),
+  termMode: $('#termMode'),
+  tableBody: $('#coefTable tbody'),
+};
+
+const DEFAULTS = { preset: 'square', T: 6.283, N: 10, M: 2048, termMode: 'both', formula: 'sin(2*pi*t/T)' };
+
+// Helpers exposed to custom formula evaluator
+const pi = Math.PI;
+const sign = x => x>0?1:(x<0?-1:0);
+
+function makeSignal(preset, T, formulaStr){
+  const w0 = 2*Math.PI/T;
+  if(preset === 'square'){
+    return t => sign(Math.sin(w0*t));
+  }
+  if(preset === 'saw'){
+    // symmetric sawtooth from -1..1
+    return t => 2 * ( (t/T - Math.floor(t/T + 0.5)) );
+  }
+  if(preset === 'triangle'){
+    // triangle from -1..1 using saw
+    return t => {
+      const x = (t/T - Math.floor(t/T + 0.5)); // in (-0.5,0.5]
+      return 4*Math.abs(x) - 1; // range [-1,1]
+    };
+  }
+  if(preset === 'halfrect'){
+    return t => Math.max(0, Math.sin(w0*t));
+  }
+  if(preset === 'pulse50'){
+    return t => ((t % T + T) % T) < T/2 ? 1 : 0;
+  }
+  // custom
+  try{
+    // Safe-ish sandbox: provide only Math, pi, sign, T
+    const f = new Function('t','pi','sign','T','sin','cos','tan','abs', `"use strict"; return (${formulaStr});`);
+    return t => f(t, Math.PI, sign, T, Math.sin, Math.cos, Math.tan, Math.abs);
+  }catch(e){
+    console.warn('Bad formula, falling back to sine', e);
+    return t => Math.sin(w0*t);
+  }
+}
+
+function computeCoeffs(f, T, N, M, termMode){
+  const dt = T/M;
+  const w0 = 2*Math.PI/T;
+
+  // Integration over one period centered around 0 for nicer symmetry
+  let a0 = 0;
+  const an = new Float64Array(N+1);
+  const bn = new Float64Array(N+1);
+
+  for(let k=0;k<M;k++){
+    const t = -T/2 + (k+0.5)*dt; // midpoint rule
+    const ft = f(t);
+    a0 += ft;
+    for(let n=1;n<=N;n++){
+      if(termMode==='even' && (n%2===1)) continue;
+      if(termMode==='odd' && (n%2===0)) continue;
+      an[n] += ft * Math.cos(n*w0*t);
+      bn[n] += ft * Math.sin(n*w0*t);
+    }
+  }
+  const norm = 2/T * dt; // (2/T) * sum * dt
+  a0 = (2/T) * a0 * dt;
+  for(let n=1;n<=N;n++){
+    an[n] *= norm;
+    bn[n] *= norm;
+  }
+  return {a0, an, bn};
+}
+
+function reconstruct(t, coeffs, T, N){
+  const w0 = 2*Math.PI/T;
+  let s = coeffs.a0/2;
+  for(let n=1;n<=N;n++){
+    s += coeffs.an[n]*Math.cos(n*w0*t) + coeffs.bn[n]*Math.sin(n*w0*t);
+  }
+  return s;
+}
+
+function drawAxes(ctx, w, h, y0=0, xLabel='t', yLabel='f'){
+  ctx.clearRect(0,0,w,h);
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+  // grid
+  for(let i=1;i<10;i++){
+    const y = i*h/10;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+  for(let i=1;i<10;i++){
+    const x = i*w/10;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+  // axes (centered)
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis');
+  ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(40,0); ctx.lineTo(40,h); ctx.stroke();
+  ctx.restore();
+}
+
+function plotSignalAndRecon(f, coeffs, T, N){
+  // Prepare canvas sizing
+  for (const c of [plot,spec,errC]) { const dpr=window.devicePixelRatio||1; c.width = Math.floor(c.clientWidth*dpr); c.height = Math.floor(c.clientHeight*dpr); const ctx = c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); }
+
+  const w = plot.clientWidth, h = plot.clientHeight;
+  drawAxes(ctxP, w, h);
+
+  // Determine y range by sampling both f and S_N
+  const S=1000; let ymin=Infinity, ymax=-Infinity;
+  for(let i=0;i<=S;i++){
+    const t = -T/2 + T*i/S;
+    const y1 = f(t);
+    const y2 = reconstruct(t, coeffs, T, N);
+    ymin = Math.min(ymin, y1, y2); ymax = Math.max(ymax, y1, y2);
+  }
+  if(!isFinite(ymin)||!isFinite(ymax)||ymin===ymax){ ymin=-1; ymax=1; }
+  const pad = 0.1*(ymax-ymin||1); ymin-=pad; ymax+=pad;
+  const x2px = t => ( (t+T/2)/T ) * w;
+  const y2px = y => h - ( (y - ymin)/(ymax - ymin) ) * h;
+
+  // Plot f(t)
+  ctxP.lineWidth = 2; ctxP.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--good');
+  ctxP.beginPath();
+  for(let i=0;i<=S;i++){
+    const t = -T/2 + T*i/S; const y = f(t);
+    const xpx=x2px(t), ypx=y2px(y);
+    if(i===0) ctxP.moveTo(xpx, ypx); else ctxP.lineTo(xpx, ypx);
+  }
+  ctxP.stroke();
+
+  // Plot reconstruction
+  ctxP.lineWidth = 2; ctxP.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--recon');
+  ctxP.beginPath();
+  for(let i=0;i<=S;i++){
+    const t = -T/2 + T*i/S; const y = reconstruct(t, coeffs, T, N);
+    const xpx=x2px(t), ypx=y2px(y);
+    if(i===0) ctxP.moveTo(xpx, ypx); else ctxP.lineTo(xpx, ypx);
+  }
+  ctxP.stroke();
+
+  // Spectrum
+  drawAxes(ctxS, spec.clientWidth, spec.clientHeight);
+  const abs = []; let maxMag = 0;
+  for(let n=1;n<=N;n++){ const m=Math.hypot(coeffs.an[n], coeffs.bn[n]); abs[n]=m; if(m>maxMag) maxMag=m; }
+  if(maxMag===0) maxMag=1;
+  const W = spec.clientWidth, H = spec.clientHeight;
+  const barW = Math.max(1, W/(N+2));
+  ctxS.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--stem');
+  ctxS.lineWidth = 2;
+  for(let n=1;n<=N;n++){
+    const x = (n+0.5)*barW;
+    const y = H - (abs[n]/maxMag)*(H*0.85);
+    ctxS.beginPath(); ctxS.moveTo(x, H-10); ctxS.lineTo(x, y); ctxS.stroke();
+  }
+
+  // Error plot: RMS error for k=1..N
+  drawAxes(ctxE, errC.clientWidth, errC.clientHeight);
+  const EH = errC.clientHeight, EW = errC.clientWidth;
+  ctxE.lineWidth = 2; ctxE.strokeStyle = '#67e8f9';
+  ctxE.beginPath();
+  for(let k=1;k<=N;k++){
+    const rms = computeRMSError(f, coeffs, T, k, 1024);
+    const x = (k/(N+1)) * (EW-20) + 10;
+    const y = EH - (rms / (1+maxMag)) * (EH*0.85);
+    if(k===1) ctxE.moveTo(x,y); else ctxE.lineTo(x,y);
+  }
+  ctxE.stroke();
+}
+
+function computeRMSError(f, coeffs, T, k, S){
+  let e2=0; for(let i=0;i<S;i++){ const t=-T/2 + T*(i+0.5)/S; const err = f(t) - reconstruct(t, coeffs, T, k); e2 += err*err; } return Math.sqrt(e2/S);
+}
+
+function updateTable(coeffs, N){
+  const tbody = ui.tableBody; tbody.innerHTML = '';
+  const fmt = x => (Math.abs(x) < 1e-12 ? '0' : x.toExponential(3));
+  for(let n=0;n<=N;n++){
+    const tr = document.createElement('tr');
+    const a = (n===0)?coeffs.a0:coeffs.an[n];
+    const b = (n===0)?0:coeffs.bn[n];
+    const mag = (n===0)?Math.abs(a)/2:Math.hypot(a,b);
+    tr.innerHTML = `<td>${n}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td>${fmt(mag)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function recalcAll(){
+  const preset = ui.preset.value;
+  const T = Math.max(1e-6, parseFloat(ui.T.value)|| (2*Math.PI));
+  const N = parseInt(ui.N.value);
+  const M = parseInt(ui.M.value);
+  const termMode = ui.termMode.value;
+
+  ui.Nval.textContent = N;
+  ui.Mval.textContent = M;
+
+  const f = makeSignal(preset, T, ui.formula.value);
+  const coeffs = computeCoeffs(f, T, N, M, termMode);
+  updateTable(coeffs, N);
+  plotSignalAndRecon(f, coeffs, T, N);
+}
+
+ui.preset.addEventListener('change', () => {
+  ui.formulaBox.style.display = ui.preset.value === 'custom' ? '' : 'none';
+  if(ui.preset.value !== 'custom') recalcAll();
+});
+['formula','period','harmonics','samples','termMode'].forEach(id => {
+  const el = id==='formula'? ui.formula : id==='period'? ui.T : id==='harmonics'? ui.N : id==='samples'? ui.M : ui.termMode;
+  el.addEventListener(id==='harmonics' || id==='samples' ? 'input' : 'change', recalcAll);
+});
+ui.recalc.addEventListener('click', recalcAll);
+
+ui.animate.addEventListener('click', () => {
+  anim.running = !anim.running;
+  ui.animate.textContent = anim.running ? '⏸ Pause' : '▶ Animate';
+  if(anim.running) requestAnimationFrame(stepAnim);
+});
+
+ui.resetView.addEventListener('click', () => {
+  // full reset to defaults
+  anim.running = false;
+  ui.animate.textContent = '▶ Animate';
+  ui.preset.value = DEFAULTS.preset;
+  ui.T.value = DEFAULTS.T;
+  ui.N.value = String(DEFAULTS.N);
+  ui.M.value = String(DEFAULTS.M);
+  ui.termMode.value = DEFAULTS.termMode;
+  ui.formula.value = DEFAULTS.formula;
+  ui.harmonicsVal.textContent = String(DEFAULTS.N);
+  ui.samplesVal.textContent = String(DEFAULTS.M);
+  ui.formulaBox.style.display = 'none';
+  recalcAll();
+});
+
+function stepAnim(){
+  if(!anim.running) return;
+  // Breathe N up & down between 1 and slider max
+  const maxN = parseInt(ui.N.max);
+  let n = parseInt(ui.N.value);
+  n += anim.dir; if(n>=maxN){ n=maxN; anim.dir=-1 } if(n<=1){ n=1; anim.dir=1 }
+  ui.N.value = String(n); ui.Nval.textContent = n;
+  recalcAll();
+  setTimeout(()=>requestAnimationFrame(stepAnim), 60);
+}
+
+// First render
+recalcAll();
+window.addEventListener('resize', recalcAll);
+</script>
+</body>
+</html>
